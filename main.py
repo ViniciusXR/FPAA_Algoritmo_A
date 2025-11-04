@@ -1,313 +1,316 @@
 """
-Algoritmo A* para encontrar o menor caminho em um labirinto 2D entre dois pontos, 
-evitando obstáculos e considerando os custos dos movimentos. 
+Algoritmo A* melhorado para encontrar o menor caminho em um labirinto 2D.
+
+Melhorias:
+- Tie-break por (f, h) na heap para desempate mais "informado".
+- Verificação rigorosa de exatamente 1 'S' (start) e 1 'E' (end).
+- g_score (sem varrer heap para atualizar nós).
+- Suporte opcional a movimentos diagonais (8 direções) com heurística Octile.
+- Suporte a terrenos com peso (células '2'..'9' multiplicam o custo do passo).
+- Impressão alinhada do labirinto e exibição do custo total.
+- Compatível com o formato anterior: 'S', 'E', '0' (livre), '1' ou '#' (obstáculo).
 """
 
 import heapq
-from typing import List, Tuple, Optional
+import math
+from typing import List, Tuple, Optional, Dict, Iterable
 
 
-class Node:
-    """Representa um nó no algoritmo A*"""
-    def __init__(self, position: Tuple[int, int], g_cost: int, h_cost: int, parent: Optional['Node'] = None):
-        self.position = position  # (linha, coluna)
-        self.g_cost = g_cost      # Custo do caminho do início até este nó
-        self.h_cost = h_cost      # Heurística (estimativa até o destino)
-        self.f_cost = g_cost + h_cost  # Custo total
-        self.parent = parent      # Nó pai para reconstruir o caminho
-    
-    def __lt__(self, other):
-        """Comparação para a fila de prioridade"""
-        return self.f_cost < other.f_cost
-    
-    def __eq__(self, other):
-        """Comparação de igualdade baseada na posição"""
-        return self.position == other.position
-    
-    def __hash__(self):
-        """Hash baseado na posição para usar em sets"""
-        return hash(self.position)
+Pos = Tuple[int, int]
 
 
-def heuristica_manhattan(pos_atual: Tuple[int, int], pos_final: Tuple[int, int]) -> int:
+def is_obstacle(cell: str) -> bool:
+    """Define o que é obstáculo."""
+    return cell in ("1", "#")
+
+
+def cell_weight(cell: str) -> float:
     """
-    Calcula a distância de Manhattan entre duas posições.
-    h(n) = |x_atual - x_final| + |y_atual - y_final|
+    Retorna o peso multiplicativo do terreno:
+    - '0', 'S', 'E' => 1.0
+    - '2'..'9' => peso numérico
+    - Qualquer outra coisa tratada como 1.0 (desde que não seja obstáculo)
     """
-    return abs(pos_atual[0] - pos_final[0]) + abs(pos_atual[1] - pos_final[1])
+    if cell in ("S", "E", "0"):
+        return 1.0
+    if cell.isdigit():
+        v = int(cell)
+        if v >= 2:
+            return float(v)
+        return 1.0
+    return 1.0
 
 
-def encontrar_posicoes(labirinto: List[List[str]]) -> Tuple[Optional[Tuple[int, int]], Optional[Tuple[int, int]]]:
+def find_unique_positions(lab: List[List[str]]) -> Tuple[Pos, Pos]:
     """
-    Encontra as posições inicial (S) e final (E) no labirinto.
-    Retorna: (posicao_inicial, posicao_final)
+    Encontra e valida que exista exatamente 1 'S' e 1 'E'.
+    Levanta ValueError se não cumprir.
     """
-    pos_inicial = None
-    pos_final = None
-    
-    for i in range(len(labirinto)):
-        for j in range(len(labirinto[i])):
-            if labirinto[i][j] == 'S':
-                pos_inicial = (i, j)
-            elif labirinto[i][j] == 'E':
-                pos_final = (i, j)
-    
-    return pos_inicial, pos_final
+    starts: List[Pos] = []
+    ends: List[Pos] = []
+    for i, row in enumerate(lab):
+        for j, c in enumerate(row):
+            if c == "S":
+                starts.append((i, j))
+            elif c == "E":
+                ends.append((i, j))
+
+    if len(starts) != 1:
+        raise ValueError(f"Esperado exatamente 1 'S', encontrado: {len(starts)}")
+    if len(ends) != 1:
+        raise ValueError(f"Esperado exatamente 1 'E', encontrado: {len(ends)}")
+
+    return starts[0], ends[0]
 
 
-def obter_vizinhos(posicao: Tuple[int, int], labirinto: List[List[str]]) -> List[Tuple[int, int]]:
-    """
-    Retorna as posições vizinhas válidas (cima, baixo, esquerda, direita).
-    """
-    linha, coluna = posicao
-    linhas = len(labirinto)
-    colunas = len(labirinto[0])
-    vizinhos = []
-    
-    # Movimentos possíveis: cima, baixo, esquerda, direita
-    movimentos = [(-1, 0), (1, 0), (0, -1), (0, 1)]
-    
-    for movimento in movimentos:
-        nova_linha = linha + movimento[0]
-        nova_coluna = coluna + movimento[1]
-        
-        # Verifica se está dentro dos limites
-        if 0 <= nova_linha < linhas and 0 <= nova_coluna < colunas:
-            # Verifica se não é um obstáculo
-            if labirinto[nova_linha][nova_coluna] != '1':
-                vizinhos.append((nova_linha, nova_coluna))
-    
-    return vizinhos
+def neighbors_4(pos: Pos) -> Iterable[Pos]:
+    i, j = pos
+    yield (i - 1, j)
+    yield (i + 1, j)
+    yield (i, j - 1)
+    yield (i, j + 1)
 
 
-def reconstruir_caminho(no_final: Node) -> List[Tuple[int, int]]:
-    """
-    Reconstrói o caminho do início ao fim seguindo os nós pais.
-    """
-    caminho = []
-    no_atual = no_final
-    
-    while no_atual is not None:
-        caminho.append(no_atual.position)
-        no_atual = no_atual.parent
-    
-    caminho.reverse()
-    return caminho
+def neighbors_8(pos: Pos) -> Iterable[Pos]:
+    i, j = pos
+    # ortogonais
+    yield (i - 1, j)
+    yield (i + 1, j)
+    yield (i, j - 1)
+    yield (i, j + 1)
+    # diagonais
+    yield (i - 1, j - 1)
+    yield (i - 1, j + 1)
+    yield (i + 1, j - 1)
+    yield (i + 1, j + 1)
 
 
-def algoritmo_a_estrela(labirinto: List[List[str]]) -> Optional[List[Tuple[int, int]]]:
+def in_bounds(lab: List[List[str]], pos: Pos) -> bool:
+    i, j = pos
+    return 0 <= i < len(lab) and 0 <= j < len(lab[0])
+
+
+def manhattan(a: Pos, b: Pos) -> float:
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+def octile(a: Pos, b: Pos) -> float:
     """
-    Implementa o algoritmo A* para encontrar o menor caminho no labirinto.
-    
-    Retorna:
-        - Lista de coordenadas do caminho se encontrado
-        - None se não houver caminho possível
+    Heurística Octile (admissível para 8 direções):
+    (sqrt(2)-1)*min(dx,dy) + max(dx,dy)
     """
-    # Validar se S e E existem no labirinto
-    pos_inicial, pos_final = encontrar_posicoes(labirinto)
-    
-    if pos_inicial is None:
-        print("Erro: Ponto inicial 'S' não encontrado no labirinto!")
-        return None
-    
-    if pos_final is None:
-        print("Erro: Ponto final 'E' não encontrado no labirinto!")
-        return None
-    
-    # Inicializar estruturas de dados
-    fila_aberta = []  # Fila de prioridade (heap)
-    conjunto_aberto = set()  # Para verificação rápida se um nó está na fila
-    conjunto_fechado = set()  # Nós já explorados
-    
-    # Criar nó inicial
-    no_inicial = Node(
-        position=pos_inicial,
-        g_cost=0,
-        h_cost=heuristica_manhattan(pos_inicial, pos_final)
-    )
-    
-    heapq.heappush(fila_aberta, no_inicial)
-    conjunto_aberto.add(pos_inicial)
-    
-    # Loop principal do A*
-    while fila_aberta:
-        # Pegar o nó com menor f_cost
-        no_atual = heapq.heappop(fila_aberta)
-        conjunto_aberto.remove(no_atual.position)
-        
-        # Verificar se chegamos ao destino
-        if no_atual.position == pos_final:
-            return reconstruir_caminho(no_atual)
-        
-        # Adicionar ao conjunto fechado
-        conjunto_fechado.add(no_atual.position)
-        
-        # Explorar vizinhos
-        for pos_vizinho in obter_vizinhos(no_atual.position, labirinto):
-            # Ignorar se já foi explorado
-            if pos_vizinho in conjunto_fechado:
+    dx = abs(a[0] - b[0])
+    dy = abs(a[1] - b[1])
+    return (math.sqrt(2) - 1) * min(dx, dy) + max(dx, dy)
+
+
+def movement_cost(from_pos: Pos, to_pos: Pos, lab: List[List[str]]) -> float:
+    """
+    Custo base do passo:
+      - 1.0 para ortogonais
+      - sqrt(2) para diagonais
+    Multiplicado pelo peso do terreno da célula de destino.
+    """
+    di = abs(to_pos[0] - from_pos[0])
+    dj = abs(to_pos[1] - from_pos[1])
+    base = math.sqrt(2) if di == 1 and dj == 1 else 1.0
+    dest_cell = lab[to_pos[0]][to_pos[1]]
+    return base * cell_weight(dest_cell)
+
+
+def reconstruct_path(came_from: Dict[Pos, Pos], current: Pos) -> List[Pos]:
+    path = [current]
+    while current in came_from:
+        current = came_from[current]
+        path.append(current)
+    path.reverse()
+    return path
+
+
+def a_star(
+    lab: List[List[str]],
+    allow_diagonals: bool = False
+) -> Optional[Tuple[List[Pos], float]]:
+    """
+    A* com:
+      - Heurística: Manhattan (4-dir) ou Octile (8-dir).
+      - g_score com heap; evita varrer heap para updates.
+      - Suporte a pesos em '2'..'9'.
+    Retorna (caminho, custo_total) ou None.
+    """
+    start, goal = find_unique_positions(lab)
+
+    # Caso trivial: S == E
+    if start == goal:
+        return [start], 0.0
+
+    neigh_fn = neighbors_8 if allow_diagonals else neighbors_4
+    heuristic = octile if allow_diagonals else manhattan
+
+    # g_score e estruturas
+    g_score: Dict[Pos, float] = {start: 0.0}
+    came_from: Dict[Pos, Pos] = {}
+
+    # Heap de (f, h, seq, pos) — tie-break por h; seq evita empate total
+    open_heap: List[Tuple[float, float, int, Pos]] = []
+    seq = 0
+    h0 = heuristic(start, goal)
+    heapq.heappush(open_heap, (h0, h0, seq, start))
+
+    closed: set[Pos] = set()
+
+    while open_heap:
+        _, _, _, current = heapq.heappop(open_heap)
+
+        if current in closed:
+            continue
+        closed.add(current)
+
+        if current == goal:
+            path = reconstruct_path(came_from, current)
+            return path, g_score[current]
+
+        for nb in neigh_fn(current):
+            if not in_bounds(lab, nb):
                 continue
-            
-            # Calcular custos para o vizinho
-            g_cost_vizinho = no_atual.g_cost + 1  # Custo de movimento sempre 1
-            h_cost_vizinho = heuristica_manhattan(pos_vizinho, pos_final)
-            
-            # Criar nó vizinho
-            no_vizinho = Node(
-                position=pos_vizinho,
-                g_cost=g_cost_vizinho,
-                h_cost=h_cost_vizinho,
-                parent=no_atual
-            )
-            
-            # Se o vizinho já está na fila aberta, verificar se encontramos um caminho melhor
-            if pos_vizinho in conjunto_aberto:
-                # Procurar o nó na fila
-                encontrado = False
-                for i, no_na_fila in enumerate(fila_aberta):
-                    if no_na_fila.position == pos_vizinho:
-                        if no_vizinho.g_cost < no_na_fila.g_cost:
-                            # Encontramos um caminho melhor, atualizar o nó
-                            fila_aberta[i] = no_vizinho
-                            heapq.heapify(fila_aberta)
-                        encontrado = True
-                        break
-            else:
-                # Adicionar novo nó à fila aberta
-                heapq.heappush(fila_aberta, no_vizinho)
-                conjunto_aberto.add(pos_vizinho)
-    
-    # Se saímos do loop sem encontrar o destino, não há caminho
+            cell = lab[nb[0]][nb[1]]
+            if is_obstacle(cell):
+                continue
+
+            tentative_g = g_score[current] + movement_cost(current, nb, lab)
+            if tentative_g < g_score.get(nb, float("inf")):
+                came_from[nb] = current
+                g_score[nb] = tentative_g
+                h = heuristic(nb, goal)
+                f = tentative_g + h
+                seq += 1
+                heapq.heappush(open_heap, (f, h, seq, nb))
+
     return None
 
 
-def exibir_labirinto_com_caminho(labirinto: List[List[str]], caminho: List[Tuple[int, int]]):
-    """
-    Exibe o labirinto com o caminho destacado usando '*'.
-    """
-    # Criar cópia do labirinto para não modificar o original
-    labirinto_visual = [linha[:] for linha in labirinto]
-    
-    # Marcar o caminho (exceto S e E)
-    for pos in caminho:
-        linha, coluna = pos
-        if labirinto_visual[linha][coluna] not in ['S', 'E']:
-            labirinto_visual[linha][coluna] = '*'
-    
-    # Exibir o labirinto
-    print("\nLabirinto com o caminho destacado:")
-    for linha in labirinto_visual:
-        print(' '.join(linha))
+def print_labyrinth(lab: List[List[str]]):
+    """Imprime o labirinto com colunas alinhadas."""
+    width = max(len(c) for row in lab for c in row)
+    for row in lab:
+        print(" ".join(c.rjust(width) for c in row))
 
 
-def criar_labirinto_exemplo() -> List[List[str]]:
+def show_path(lab: List[List[str]], path: List[Pos]):
+    """Imprime o labirinto com o caminho marcado por '*' (preservando S e E)."""
+    vis = [row[:] for row in lab]
+    for (i, j) in path:
+        if vis[i][j] not in ("S", "E"):
+            vis[i][j] = "*"
+    print("\nLabirinto com caminho:")
+    print_labyrinth(vis)
+
+
+def create_example(allow_weights: bool = True) -> List[List[str]]:
     """
-    Cria um labirinto de exemplo para teste.
+    Exemplo:
+    - '1' / '#' = obstáculo
+    - '2' (peso maior) para ilustrar custo de terreno
     """
-    return [
-        ['S', '0', '1', '0', '0'],
-        ['0', '0', '1', '0', '1'],
-        ['0', '0', '0', '0', '0'],
-        ['1', '0', '0', 'E', '1']
+    lab = [
+        ["S", "0", "1", "0", "0"],
+        ["0", "0", "1", "0", "1"],
+        ["0", "0", "0", "0", "0"],
+        ["1", "0", "0", "E", "1"],
     ]
+    if allow_weights:
+        lab[2][1] = "2"  # terreno mais "caro" (peso 2x) apenas para exemplo
+    return lab
 
 
-def ler_labirinto_usuario() -> List[List[str]]:
+def read_user_labyrinth() -> List[List[str]]:
     """
-    Permite ao usuário criar um labirinto customizado.
+    Lê o labirinto do usuário.
+    VÁLIDOS: S, E, 0, 1, #, 2..9
     """
     print("\nCriar labirinto customizado")
-    print("Legenda: S = início, E = fim, 0 = livre, 1 = obstáculo")
-    
+    print("Legenda: S=início, E=fim, 0=livre, 1/#=obstáculo, 2..9=terreno pesado")
     while True:
         try:
-            linhas = int(input("\nQuantas linhas terá o labirinto? "))
-            colunas = int(input("Quantas colunas terá o labirinto? "))
-            
+            linhas = int(input("\nQuantas linhas? "))
+            colunas = int(input("Quantas colunas? "))
             if linhas <= 0 or colunas <= 0:
-                print("O número de linhas e colunas deve ser maior que zero!")
+                print("Linhas/colunas devem ser > 0.")
                 continue
-            
             break
         except ValueError:
-            print("Por favor, digite um número válido!")
-    
-    labirinto = []
-    print(f"\nDigite cada linha do labirinto ({colunas} elementos separados por espaço):")
-    print("Exemplo: S 0 1 0 E")
-    
+            print("Digite números válidos.")
+
+    lab: List[List[str]] = []
+    print(f"\nDigite cada linha com {colunas} elementos separados por espaço.")
+    print("Ex.: S 0 1 0 E  ou  S 0 # 0 E  ou  S 0 2 0 E")
+    valid = set(list("SE0#") + [str(d) for d in range(0, 10)])
     for i in range(linhas):
         while True:
-            linha_str = input(f"Linha {i + 1}: ").strip().upper()
-            elementos = linha_str.split()
-            
-            if len(elementos) != colunas:
-                print(f"Erro: Você deve digitar exatamente {colunas} elementos!")
+            linha = input(f"Linha {i+1}: ").strip().upper().split()
+            if len(linha) != colunas:
+                print(f"ERRO: precisa ter exatamente {colunas} elementos.")
                 continue
-            
-            # Validar elementos
-            valido = True
-            for elem in elementos:
-                if elem not in ['S', 'E', '0', '1']:
-                    print(f"Erro: '{elem}' não é válido. Use apenas S, E, 0 ou 1!")
-                    valido = False
-                    break
-            
-            if valido:
-                labirinto.append(elementos)
-                break
-    
-    return labirinto
+            if not all(token in valid for token in linha):
+                print("ERRO: use apenas S, E, 0, 1, #, 2..9.")
+                continue
+            lab.append(linha)
+            break
+
+    # valida S/E únicos aqui para feedback imediato
+    try:
+        _ = find_unique_positions(lab)
+    except ValueError as e:
+        print(f"Validação: {e}")
+    return lab
 
 
 def main():
-    """
-    Função principal do programa.
-    """
-    print("=" * 60)
-    print("ALGORITMO A* - ROBÔ DE RESGATE EM LABIRINTO")
-    print("=" * 60)
-    
+    print("=" * 64)
+    print("ALGORITMO A* – LABIRINTO (4 ou 8 direções, pesos de terreno)")
+    print("=" * 64)
+
     while True:
-        print("\nEscolha uma opção:")
-        print("1 - Usar labirinto de exemplo")
+        print("\nOpções:")
+        print("1 - Usar labirinto de exemplo (com um terreno '2')")
         print("2 - Criar labirinto customizado")
         print("3 - Sair")
-        
-        opcao = input("\nOpção: ").strip()
-        
-        if opcao == '1':
-            labirinto = criar_labirinto_exemplo()
-        elif opcao == '2':
-            labirinto = ler_labirinto_usuario()
-        elif opcao == '3':
-            print("\nEncerrando programa...")
-            break
-        else:
-            print("Opção inválida! Tente novamente.")
+
+        op = input("Opção: ").strip()
+        if op == "3":
+            print("Encerrando...")
+            return
+        elif op not in ("1", "2"):
+            print("Opção inválida.")
             continue
-        
-        # Exibir labirinto original
+
+        diag_in = input("Permitir diagonais? (S/N): ").strip().upper()
+        allow_diag = diag_in == "S"
+
+        lab = create_example(True) if op == "1" else read_user_labyrinth()
+
         print("\nLabirinto original:")
-        for linha in labirinto:
-            print(' '.join(linha))
-        
-        # Executar o algoritmo A*
-        print("\nExecutando algoritmo A*...")
-        caminho = algoritmo_a_estrela(labirinto)
-        
-        # Exibir resultado
-        if caminho is None:
-            print("\n❌ Sem solução: Não há caminho possível entre S e E!")
+        print_labyrinth(lab)
+
+        print("\nExecutando A*...")
+        try:
+            result = a_star(lab, allow_diagonals=allow_diag)
+        except ValueError as e:
+            print(f"\n❌ Erro de validação: {e}")
+            continue
+
+        if result is None:
+            print("\n❌ Sem solução: não há caminho entre S e E.")
         else:
-            print(f"\n✓ Caminho encontrado com {len(caminho)} passos!")
+            path, total_cost = result
+            print(f"\n✓ Caminho encontrado com {len(path)} passos (inclui S e E).")
+            print(f"Custo total acumulado: {total_cost:.3f}")
             print("\nCoordenadas do caminho:")
-            for i, pos in enumerate(caminho):
-                print(f"Passo {i}: {pos}")
-            
-            exibir_labirinto_com_caminho(labirinto, caminho)
-        
-        print("\n" + "-" * 60)
+            for k, p in enumerate(path):
+                print(f"Passo {k}: {p}")
+            show_path(lab, path)
+
+        print("\n" + "-" * 64)
 
 
 if __name__ == "__main__":
