@@ -15,6 +15,14 @@ import heapq
 import math
 from typing import List, Tuple, Optional, Dict, Iterable
 
+try:
+    from .view_curses import run_curses_animation  # tipo: ignore
+except Exception:
+    try:
+        from view_curses import run_curses_animation  # fallback quando exec direto
+    except Exception:
+        run_curses_animation = None  # sem curses disponível
+
 
 Pos = Tuple[int, int]
 
@@ -309,6 +317,17 @@ def main():
             for k, p in enumerate(path):
                 print(f"Passo {k}: {p}")
             show_path(lab, path)
+
+            # Visualização opcional com curses
+            if run_curses_animation is not None:
+                vis = input("\nVisualizar com curses em tempo real? (S/N): ").strip().upper()
+                if vis == 'S':
+                    try:
+                        run_curses_animation(lab, path, delay_ms=120)
+                    except Exception as e:
+                        print(f"[curses] Falha ao iniciar visualização: {e}")
+            else:
+                print("\n[INFO] curses indisponível neste ambiente. Pulei a visualização.")
 
         print("\n" + "-" * 64)
 
