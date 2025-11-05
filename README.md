@@ -1,9 +1,3 @@
-## Alunos
-* Cristiano Nunes Pires Junior
-* Joey Clapton Maciel Barbosa Santos
-* Sthel Felipe Torres
-* Vinicius Xavier Ramalho
-
 # PathFinder - Algoritmo A* no Labirinto 2D
 
 Implementação do Algoritmo A* para encontrar o menor caminho entre `S` (start) e `E` (end) em um labirinto 2D. Suporta movimentos em 4 direções (padrão) e opcionalmente em 8 direções (ponto extra), além de pesos de terreno (ponto extra).
@@ -62,6 +56,21 @@ Siga o menu interativo:
 
 ---
 
+## 🎥 Visualização com curses (opcional)
+
+Após encontrar um caminho, o programa pergunta se deseja visualizar com curses. Responda `S` para abrir a animação no terminal.
+
+- Arquivo: `view_curses.py`
+- Integração: chamada automática via `run_curses_animation(lab, path)`
+- Controles:
+  - `q`: sair
+  - `+` / `-`: aumenta/diminui velocidade
+  - `→` / `←` ou `n` / `p`: avança/retrocede um passo
+
+Dica: use um terminal compatível (Terminal.app/iTerm2 no macOS, Windows Terminal com WSL ou Python curses disponível). Nenhuma dependência extra é necessária.
+
+---
+
 ## ✅ Conformidade com os Requisitos
 
 - Leitura do labirinto: entrada via exemplo ou input do usuário (226-266)
@@ -75,6 +84,7 @@ Siga o menu interativo:
 Pontos extra implementados (opcionais):
 - Diagonais (74-85) + heurística Octile (97-105) + custo √2 (116)
 - Pesos `2..9` multiplicativos no custo (27-41, 107-119)
+- Visualização em tempo real com curses (`view_curses.py`)
 
 Dica: para aderir estritamente ao requisito de custo 1, execute com diagonais = N e não use pesos no labirinto (apenas `S`, `E`, `0`, `1`/`#`).
 
@@ -123,6 +133,7 @@ Saída:
 ```
 FPAA/TP-04/
 ├── main.py          # Implementação do A* (4-dir e extras opcionais)
+├── view_curses.py   # Visualização em tempo real (opcional)
 ├── task.md          # Enunciado do trabalho
 └── README.md        # Documentação
 ```
