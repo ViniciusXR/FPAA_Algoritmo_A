@@ -4,6 +4,16 @@ Implementação do Algoritmo A* para encontrar o menor caminho entre `S` (start)
 
 ---
 
+## Alunos
+
+* Cristiano Nunes Pires Junior
+
+* Joey Clapton Maciel Barbosa Santos
+
+* Sthel Felipe Torres
+
+* Vinicius Xavier Ramalho
+
 ## 🧐 O que é?
 
 O A* combina o custo acumulado do caminho (`g(n)`) com uma estimativa admissível da distância até o objetivo (`h(n)`), escolhendo expandir o nó com menor `f(n) = g(n) + h(n)`.
